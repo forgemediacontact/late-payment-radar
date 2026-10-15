@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Late Payment Radar</title>
+<style>
+:root{--ink:#14213D;--bg:#F2F5F8;--card:#fff;--line:#D5DDE6;--mute:#5B6B7F;--ok:#1E8E5A;--mid:#B7791F;--bad:#C8372D;--acc:#14213D}
+@media(prefers-color-scheme:dark){:root{--ink:#E8EEF5;--bg:#0E1622;--card:#17212F;--line:#2B394B;--mute:#93A3B8;--ok:#4CC38A;--mid:#E3B341;--bad:#F0716A;--acc:#E8EEF5}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:20px 16px 60px}
+h1{font:700 2rem/1.15 Georgia,serif;margin:8px 0 6px}
+p.sub{color:var(--mute);margin:0 0 20px;max-width:60ch}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+h2{font-size:1.05rem;margin:0 0 10px}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:560px}
+th{text-align:left;font-size:.8rem;color:var(--mute);font-weight:600;padding:4px 6px}
+td{padding:3px 4px}
+input,select,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 8px;width:100%}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--acc);background:var(--acc);color:var(--bg);padding:8px 14px}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--mid);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-radius:8px;padding:10px}
+.kpi b{display:block;font-size:1.5rem}
+.kpi span{color:var(--mute);font-size:.85rem}
+.cust{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+.cust:first-of-type{border-top:0}
+.tag{font-weight:700}
+.High{color:var(--bad)}.Medium{color:var(--mid)}.Low{color:var(--ok)}.Unknown{color:var(--mute)}
+small{color:var(--mute)}
+textarea{min-height:170px}
+.x{background:transparent;color:var(--mute);border:0;padding:4px 8px}
+</style>
+</head>
+<body>
+<main>
+<h1>Late Payment Radar</h1>
+<p class="sub">Add your invoices. See which customers usually pay late, where your cash will fall short, and send the right reminder.</p>
+
+<section>
+<h2>1. Your invoices</h2>
+<div class="tbl"><table>
+<thead><tr><th>Customer</th><th>Amount</th><th>Due date</th><th>Paid date <small>(blank = unpaid)</small></th><th></th></tr></thead>
+<tbody id="rows"></tbody></table></div>
+<div class="row">
+<button id="add">Add invoice</button>
+<button class="ghost" id="sample">Load sample data</button>
+<button class="ghost" id="clear">Clear all</button>
+<label>Currency <select id="cur" style="width:auto"><option>₹</option><option>$</option><option>€</option><option>£</option><option>AED </option></select></label>
+</div>
+<small>Your data stays in this browser. Nothing is uploaded.</small>
+</section>
+
+<section>
+<h2>2. Cash at risk</h2>
+<div class="kpis" id="kpis"></div>
+</section>
+
+<section>
+<h2>3. Customer risk</h2>
+<div id="cust"><small>Add invoices to see results.</small></div>
+</section>
+
+<section>
+<h2>4. Reminder email</h2>
+<div class="row" style="margin-top:0"><select id="pick" style="max-width:320px"></select></div>
+<div class="row"><input id="me" placeholder="Your name / business name"></div>
+<div class="row"><textarea id="mail" readonly></textarea></div>
+<div class="row"><button id="copy">Copy email</button><small id="msg"></small></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const DAY=864e5;
+let data=[];
+try{data=JSON.parse(localStorage.getItem("lpr")||"[]")}catch(e){}
+const today=new Date(new Date().toDateString());
+const d=s=>s?new Date(s+"T00:00:00"):null;
+const iso=x=>{const t=new Date(x);return t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0")};
+const ago=n=>iso(+today-n*DAY);
+const money=n=>$("cur").value+Math.round(n).toLocaleString();
+function save(){try{localStorage.setItem("lpr",JSON.stringify(data))}catch(e){}}
+
+function renderRows(){
+ $("rows").innerHTML=data.map((r,i)=>`<tr>
+ <td><input data-i="${i}" data-k="c" value="${r.c||""}" placeholder="Customer name"></td>
+ <td><input data-i="${i}" data-k="a" type="number" min="0" value="${r.a||""}" placeholder="0"></td>
+ <td><input data-i="${i}" data-k="due" type="date" value="${r.due||""}"></td>
+ <td><input data-i="${i}" data-k="paid" type="date" value="${r.paid||""}"></td>
+ <td><button class="x" data-del="${i}" aria-label="Remove invoice">✕</button></td></tr>`).join("");
+}
+
+function analyse(){
+ const by={};
+ data.forEach(r=>{if(!r.c||!r.due)return;(by[r.c]=by[r.c]||{name:r.c,late:[],open:[]});
+  if(r.paid)by[r.c].late.push(Math.max(0,Math.round((d(r.paid)-d(r.due))/DAY)));
+  else by[r.c].open.push({a:+r.a||0,due:d(r.due)})});
+ return Object.values(by).map(c=>{
+  const avg=c.late.length?c.late.reduce((s,x)=>s+x,0)/c.late.length:null;
+  const risk=avg===null?"Unknown":avg>20?"High":avg>5?"Medium":"Low";
+  const owed=c.open.reduce((s,o)=>s+o.a,0);
+  const overdue=c.open.filter(o=>o.due<today);
+  const overdueAmt=overdue.reduce((s,o)=>s+o.a,0);
+  const maxOver=overdue.reduce((m,o)=>Math.max(m,Math.round((today-o.due)/DAY)),0);
+  const lateOpen=c.open.filter(o=>avg!==null&&o.due>=today&&avg>5).reduce((s,o)=>s+o.a,0);
+  return{...c,avg,risk,owed,overdueAmt,maxOver,lateOpen};
+ }).sort((a,b)=>b.owed-a.owed);
+}
+
+function renderResults(){
+ const cs=analyse();
+ const owed=cs.reduce((s,c)=>s+c.owed,0),over=cs.reduce((s,c)=>s+c.overdueAmt,0),exp=cs.reduce((s,c)=>s+c.lateOpen,0);
+ $("kpis").innerHTML=`<div class="kpi"><b>${money(owed)}</b><span>Total unpaid</span></div>
+ <div class="kpi"><b class="High">${money(over)}</b><span>Already overdue</span></div>
+ <div class="kpi"><b class="Medium">${money(exp)}</b><span>Not due yet, but likely to arrive late</span></div>`;
+ $("cust").innerHTML=cs.length?cs.map(c=>`<div class="cust"><div><b>${c.name}</b><br><small>${c.avg===null?"No paid invoices yet, so no history":"Pays on average "+Math.round(c.avg)+" days after the due date"}</small></div>
+ <div style="text-align:right"><span class="tag ${c.risk}">${c.risk} risk</span><br><small>Unpaid ${money(c.owed)}${c.maxOver?" · "+c.maxOver+" days overdue":""}</small></div></div>`).join(""):'<small>Add invoices to see results.</small>';
+ const keep=$("pick").value;
+ $("pick").innerHTML=cs.filter(c=>c.owed>0).map(c=>`<option>${c.name}</option>`).join("")||"<option value=''>No unpaid invoices</option>";
+ if(keep)$("pick").value=keep;
+ mail(cs);
+}
+
+function mail(cs){
+ cs=cs||analyse();
+ const c=cs.find(x=>x.name===$("pick").value);
+ if(!c){$("mail").value="";return}
+ const me=$("me").value||"[Your name]";
+ let subj,body;
+ if(c.maxOver>30||c.risk==="High"&&c.maxOver>0){
+  subj=`Overdue: ${money(c.overdueAmt||c.owed)} payment needed this week`;
+  body=`Dear ${c.name},\n\nOur records show ${money(c.overdueAmt||c.owed)} is overdue by ${c.maxOver} days. Please arrange payment within 3 working days, or tell us the date we can expect it.\n\nIf there is a problem with the invoice, reply to this email today so we can fix it quickly. Further delay may affect our ability to continue supplying on credit terms.\n\nRegards,\n${me}`;
+ }else if(c.maxOver>0){
+  subj=`Reminder: invoice overdue by ${c.maxOver} days`;
+  body=`Dear ${c.name},\n\nThis is a reminder that ${money(c.overdueAmt)} was due ${c.maxOver} days ago. Please confirm when we can expect payment.\n\nIf you have already paid, thank you, and please ignore this message.\n\nRegards,\n${me}`;
+ }else{
+  subj=`Friendly reminder: payment of ${money(c.owed)} coming due`;
+  body=`Dear ${c.name},\n\nA quick note that ${money(c.owed)} is coming due soon. Please let us know if you need anything from us to process it on time.\n\nThank you for your business.\n\nRegards,\n${me}`;
+ }
+ $("mail").value="Subject: "+subj+"\n\n"+body;
+}
+
+function refresh(){save();renderResults()}
+$("rows").addEventListener("input",e=>{const t=e.target;if(t.dataset.i===undefined)return;data[t.dataset.i][t.dataset.k]=t.value;refresh()});
+$("rows").addEventListener("click",e=>{const i=e.target.dataset.del;if(i===undefined)return;data.splice(i,1);renderRows();refresh()});
+$("add").onclick=()=>{data.push({c:"",a:"",due:"",paid:""});renderRows();refresh()};
+$("clear").onclick=()=>{if(confirm("Remove all invoices?")){data=[];renderRows();refresh()}};
+$("sample").onclick=()=>{data=[
+ {c:"Sharma Traders",a:40000,due:ago(90),paid:ago(60)},{c:"Sharma Traders",a:25000,due:ago(40),paid:ago(15)},{c:"Sharma Traders",a:60000,due:ago(12),paid:""},
+ {c:"Nova Retail",a:30000,due:ago(80),paid:ago(79)},{c:"Nova Retail",a:45000,due:iso(+today+10*DAY),paid:""},
+ {c:"Gulf Imports",a:90000,due:ago(35),paid:""},{c:"Gulf Imports",a:50000,due:ago(100),paid:ago(70)}];
+ renderRows();refresh()};
+$("cur").onchange=renderResults;
+$("pick").onchange=()=>mail();
+$("me").oninput=()=>mail();
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText($("mail").value);$("msg").textContent="Copied"}catch(e){$("mail").select();$("msg").textContent="Press copy on your keyboard"}};
+renderRows();renderResults();
+</script>
+</body>
+</html>
